@@ -546,15 +546,18 @@ async def wait_for_status_change(
                 parse_mode="Markdown",
             )
 
-            # 🆕 منطق التوقف + شرط الإضافة الجديد
+            # 🆕 منطق التوقف + شرط الإضافة المحدّث
             if is_final:
                 response_time = (datetime.now() - start_time).total_seconds()
                 logger.info(f"✅ {email} STABLE at {status} in {response_time:.1f}s")
 
-                # 🆕 إضافة للمراقبة فقط لو: AVAILABLE + جروب مطابق
+                # 🆕 إضافة للمراقبة: AVAILABLE أو REFRESHING أو TRANSFERRING + جروب مطابق
                 added_to_monitor = False
+                
+                # قائمة الحالات المراقبة
+                monitored_statuses = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
 
-                if status == "AVAILABLE":
+                if status in monitored_statuses:
                     group_name = account_info.get("Group", "")
                     if group_name == default_group_name:  # ← مطابقة دقيقة
                         add_monitored_account(
@@ -565,6 +568,7 @@ async def wait_for_status_change(
                             source="bot",  # 🆕 من البوت
                         )
                         added_to_monitor = True
+                        logger.info(f"✅ Added {email} to monitoring ({status})")
 
                 # ✅ الحل الصحيح: إزالة الحساب الحالي فقط من قائمة الأهداف
                 smart_cache.deactivate_burst_target(account_id)
@@ -592,13 +596,16 @@ async def wait_for_status_change(
     if account_id:
         smart_cache.deactivate_burst_target(account_id)
 
-    # 🆕 شرط الإضافة المحدّث
+    # 🆕 شرط الإضافة المحدّث (يدعم 3 حالات)
     if account_info:
         status = account_info.get("Status", "").upper()
-        if status == "AVAILABLE":
+        monitored_statuses = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
+        
+        if status in monitored_statuses:
             group_name = account_info.get("Group", "")
             if group_name == default_group_name:
                 add_monitored_account(email, account_id, status, chat_id, source="bot")
+                logger.info(f"✅ Added {email} to monitoring (timeout case, {status})")
         return True, account_info
 
     return False, None
@@ -708,18 +715,22 @@ async def continuous_monitor(
             }
 
             auto_added = False
+            # 🆕 قائمة الحالات المراقبة
+            monitored_statuses = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
+            
             for account in all_accounts:
                 account_id = account.get("idAccount")
+                account_status = account.get("Status", "").upper()
 
                 # Skip if:
                 # - No ID
                 # - Already monitored
-                # - Not AVAILABLE
+                # - Not in monitored statuses (AVAILABLE, REFRESHING, TRANSFERRING)
                 # - Group doesn't match
                 if (
                     not account_id
                     or account_id in existing_ids
-                    or account.get("Status", "").upper() != "AVAILABLE"
+                    or account_status not in monitored_statuses
                     or account.get("Group", "") != default_group_name  # 🎯 exact match
                 ):
                     continue
@@ -730,13 +741,13 @@ async def continuous_monitor(
                 add_monitored_account(
                     email,
                     account_id,
-                    "AVAILABLE",
+                    account_status,
                     chat_id,
                     source="manual",  # 🆕 auto-discovered = manual
                 )
                 existing_ids.add(account_id)
                 auto_added = True
-                logger.info(f"✅ Auto-monitored {email} (AVAILABLE + default group)")
+                logger.info(f"✅ Auto-monitored {email} ({account_status} + default group)")
 
             # Reload if auto-added
             if auto_added:
@@ -830,7 +841,7 @@ async def continuous_monitor(
 
             if "LOGGING" in statuses:
                 cycle_delay = random.uniform(10, 20)
-            elif "AVAILABLE" in statuses or "ACTIVE" in statuses:
+            elif any(s in statuses for s in ["AVAILABLE", "ACTIVE", "REFRESHING", "TRANSFERRING"]):
                 cycle_delay = random.uniform(30, 60)
             else:
                 cycle_delay = random.uniform(60, 120)
