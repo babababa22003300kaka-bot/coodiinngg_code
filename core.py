@@ -12,7 +12,7 @@ import json
 import logging
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -32,6 +32,15 @@ from sheets.taken import add_to_taken_queue
 from stats import stats
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🧹 Cleanup Configuration
+# ═══════════════════════════════════════════════════════════════
+
+CLEANUP_INTERVAL = 21600      # 6 ساعات بالثواني
+CLEANUP_AGE_HOURS = 50        # حذف الحسابات الأقدم من 50 ساعة
+CLEANUP_THRESHOLD = 5         # الحد الأدنى للتنفيذ
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -675,6 +684,70 @@ async def send_status_notification(
 
 
 # ═══════════════════════════════════════════════════════════════
+# 🧹 Cleanup Function
+# ═══════════════════════════════════════════════════════════════
+
+
+def cleanup_old_accounts(accounts: Dict) -> int:
+    """
+    🧹 تنظيف الحسابات القديمة (>50 ساعة بدون تحديث)
+    
+    ✅ Features:
+    - In-place modification (بدون نسخ)
+    - Early exit لو مفيش حسابات قديمة
+    - Threshold protection (الحد الأدنى 5 حسابات)
+    - Zero disk I/O
+    - Minimal CPU usage
+    
+    Returns:
+        int: عدد الحسابات المحذوفة
+    """
+    if not accounts:
+        return 0
+    
+    try:
+        now = datetime.now()
+        cutoff_time = now - timedelta(hours=CLEANUP_AGE_HOURS)
+        
+        # جمع مفاتيح الحسابات القديمة
+        old_keys = []
+        
+        for key, data in accounts.items():
+            try:
+                last_check_str = data.get("last_check")
+                if not last_check_str:
+                    continue
+                
+                last_check = datetime.fromisoformat(last_check_str)
+                
+                # لو الحساب أقدم من 50 ساعة
+                if last_check < cutoff_time:
+                    old_keys.append(key)
+                    
+            except (ValueError, TypeError, AttributeError):
+                # لو في مشكلة في التاريخ، نتخطى الحساب ده
+                continue
+        
+        # Early exit: لو مفيش حسابات قديمة كفاية
+        if len(old_keys) < CLEANUP_THRESHOLD:
+            return 0
+        
+        # حذف الحسابات القديمة (in-place)
+        for key in old_keys:
+            del accounts[key]
+        
+        # حفظ التغييرات
+        if old_keys:
+            save_monitored_accounts(accounts)
+        
+        return len(old_keys)
+        
+    except Exception as e:
+        logger.error(f"⚠️ Cleanup error: {e}")
+        return 0
+
+
+# ═══════════════════════════════════════════════════════════════
 # 🔄 Background Monitor with Smart TTL + Auto-Discovery + Taken Handler
 # ═══════════════════════════════════════════════════════════════
 
@@ -835,6 +908,18 @@ async def continuous_monitor(
 
             # 🎯 تعديل ذكي للـ TTL بناءً على النشاط
             smart_cache.adjust_ttl(changes_detected)
+
+            # 🧹 Cleanup old accounts (every 6 hours)
+            if not hasattr(cleanup_old_accounts, 'last_run'):
+                cleanup_old_accounts.last_run = datetime.now()
+
+            time_since_cleanup = (datetime.now() - cleanup_old_accounts.last_run).total_seconds()
+
+            if time_since_cleanup >= CLEANUP_INTERVAL:
+                removed_count = cleanup_old_accounts(accounts)
+                if removed_count > 0:
+                    logger.info(f"🧹 Cleaned {removed_count} old accounts (>50h inactive)")
+                cleanup_old_accounts.last_run = datetime.now()
 
             # فترة الانتظار
             statuses = [d["last_known_status"] for d in accounts.values()]
