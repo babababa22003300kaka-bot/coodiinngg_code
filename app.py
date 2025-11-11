@@ -3863,6 +3863,20 @@ try:
     # تهيئة Application
     loop.run_until_complete(telegram_app.initialize())
     logger.info("✅ Telegram Application initialized successfully")
+    
+    # تعيين webhook تلقائياً
+    try:
+        webhook_url = "https://zizo32332.pythonanywhere.com/webhook"
+        telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        response = requests.post(telegram_url, data={'url': webhook_url}, timeout=15)
+        webhook_result = response.json()
+        if webhook_result.get('ok'):
+            logger.info(f"✅ Webhook تم تعيينه: {webhook_url}")
+        else:
+            logger.warning(f"⚠️ Webhook setup warning: {webhook_result}")
+    except Exception as webhook_error:
+        logger.warning(f"⚠️ Webhook auto-setup failed: {webhook_error}")
+        
 except Exception as e:
     logger.error(f"❌ فشل تهيئة Telegram Application: {e}")
     telegram_app = None
@@ -3918,9 +3932,15 @@ def webhook():
                 logger.error(f"❌ Process error: {e}")
                 logger.error(traceback.format_exc())
 
-        # تشغيل async في thread منفصل
+        # تشغيل async باستخدام event loop موجود
         import asyncio
-        asyncio.run(process())
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        loop.run_until_complete(process())
 
         return jsonify({'status': 'ok'}), 200
 
