@@ -3832,30 +3832,9 @@ def stats_json():
     return account_manager.get_statistics(), 200
 
 
-def main():
-    """الدالة الرئيسية - Web Service فقط"""
-    logger.info("🌐 بدء تشغيل Web Service مع Webhook...")
+# تم حذف دالة main() القديمة - استخدم main_webhook() بدلاً منها
 
-    # تشغيل Flask مباشرة بدون threading
-    port = int(os.environ.get("PORT", 5000))
-    logger.info(f"🌐 Flask يعمل على المنفذ {port}")
-
-    # محاولة تعيين webhook تلقائياً
-    try:
-        webhook_url = "https://zizo32332.pythonanywhere.com/webhook"
-        telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-        response = requests.post(telegram_url, data={'url': webhook_url}, timeout=15)
-        logger.info(f"✅ Webhook auto-setup: {response.json()}")
-    except Exception as e:
-        logger.warning(f"⚠️ Webhook auto-setup failed: {e}")
-
-    app.run(host='0.0.0.0', port=port, debug=False)
-
-# ============ Webhook Routes (محسّنة) ============
-# تم حذف النسخة البسيطة واستبدالها بالنسخة المحسّنة في آخر الملف
 # ============ إضافة Flask للـ Webhook (مع دعم الأزرار الكامل) ============
-from flask import Flask, request, jsonify
-import requests
 
 flask_app = Flask(__name__)
 
@@ -4017,10 +3996,5 @@ def main_webhook():
     flask_app.run(host='0.0.0.0', port=port, debug=False)
 
 if __name__ == '__main__':
-    # اختيار الوضع تلقائياً
-    import sys
-
-    if '--webhook' in sys.argv or os.environ.get('PYTHONANYWHERE_DOMAIN'):
-        main_webhook()
-    else:
-        main()
+    # دائماً استخدم main_webhook (النسخة المحسّنة)
+    main_webhook()
