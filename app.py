@@ -3901,46 +3901,101 @@ def home():
     </html>
     """
 
+def send_telegram_text(chat_id, text):
+    """إرسال رسالة نصية عبر Telegram API"""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        response = requests.post(url, json=data, timeout=10)
+        result = response.json()
+        logger.info(f"📤 Message sent to {chat_id}: {result.get('ok')}")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Send message error: {str(e)}")
+        return None
+
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
-    """استقبال تحديثات Telegram ومعالجتها بنفس طريقة الكود القديم"""
-    global telegram_app
-
+    """معالجة رسائل تليجرام عبر webhook - النسخة البسيطة الشغالة"""
     try:
         update_data = request.get_json()
-        logger.info(f"📨 WEBHOOK: {json.dumps(update_data, ensure_ascii=False)[:200]}")
+        logger.info(f"📨 WEBHOOK RECEIVED: {json.dumps(update_data, ensure_ascii=False)[:200]}...")
 
-        if not telegram_app:
-            logger.error("❌ Telegram app not initialized")
-            return jsonify({'status': 'error', 'message': 'App not ready'}), 500
+        # معالجة الرسائل النصية
+        if 'message' in update_data:
+            message = update_data['message']
+            chat_id = message['chat']['id']
+            user_first_name = message['from'].get('first_name', 'صديقي')
 
-        # تحويل JSON لـ Update object
-        from telegram import Update
-        update = Update.de_json(update_data, telegram_app.bot)
+            if message.get('text'):
+                message_text = message['text']
+                logger.info(f"💬 TEXT MESSAGE from {chat_id}: '{message_text}'")
 
-        # تشغيل المعالجة
-        async def process():
-            """معالجة التحديث بنفس handlers القديمة"""
-            try:
-                # إنشاء context فارغ (هيتملى تلقائي)
-                from telegram.ext import ContextTypes
+                # معالجة الأوامر مباشرة
+                if message_text.startswith('/start'):
+                    send_telegram_text(chat_id, f"""
+👋 مرحباً {user_first_name}!
 
-                # استخدام الـ Application لمعالجة الـ Update
-                await telegram_app.process_update(update)
+🤖 <b>بوت إدارة الحسابات</b>
 
-            except Exception as e:
-                logger.error(f"❌ Process error: {e}")
-                logger.error(traceback.format_exc())
+📋 الأوامر المتاحة:
+/start - بدء البوت
+/help - المساعدة
+/stats - الإحصائيات
 
-        # تشغيل async باستخدام event loop موجود
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        loop.run_until_complete(process())
+✅ البوت شغال بنظام Webhook
+""")
+
+                elif message_text.startswith('/help'):
+                    send_telegram_text(chat_id, """
+📖 <b>المساعدة</b>
+
+الأوامر المتاحة:
+/start - بدء البوت
+/help - هذه الرسالة
+/stats - عرض الإحصائيات
+
+💡 أرسل أي رسالة للحصول على حساب
+""")
+
+                elif message_text.startswith('/stats'):
+                    stats = account_manager.get_statistics()
+                    send_telegram_text(chat_id, f"""
+📊 <b>إحصائيات الحسابات</b>
+
+📈 إجمالي الحسابات: {stats['total']}
+✅ المتاح الآن: {stats['available']}
+⏳ في الانتظار: {stats['pending']}
+🔄 في Cooldown: {stats['cooldown']}
+""")
+
+                else:
+                    # طلب حساب
+                    logger.info(f"🔍 User {chat_id} requesting account...")
+                    result = account_manager.get_available_account()
+
+                    if result:
+                        # النتيجة هي tuple: (email, password)
+                        email, password = result
+
+                        send_telegram_text(chat_id, f"""
+✅ <b>تم توفير حساب!</b>
+
+📧 البريد: <code>{email}</code>
+🔑 الكلمة: <code>{password}</code>
+
+⏰ الحساب سيكون متاحاً مرة أخرى بعد 30 دقيقة
+""")
+                    else:
+                        send_telegram_text(chat_id, """
+❌ <b>عذراً، لا توجد حسابات متاحة حالياً</b>
+
+⏳ يرجى المحاولة لاحقاً أو استخدام /stats لمعرفة عدد الحسابات المتاحة
+""")
 
         return jsonify({'status': 'ok'}), 200
 
