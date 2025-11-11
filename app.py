@@ -4089,6 +4089,10 @@ def main_webhook():
     logger.info(f"🌐 Flask يعمل على المنفذ {port}")
     flask_app.run(host='0.0.0.0', port=port, debug=False)
 
+# ============ WSGI Entry Point for PythonAnywhere ============
+# PythonAnywhere يحتاج متغير اسمه 'application'
+application = flask_app
+
 if __name__ == '__main__':
     # دائماً استخدم main_webhook (النسخة المحسّنة)
     main_webhook()
