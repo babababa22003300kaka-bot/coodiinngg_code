@@ -3838,8 +3838,34 @@ def stats_json():
 
 flask_app = Flask(__name__)
 
-# متغير عام للـ Application
-telegram_app = None
+# ============ تهيئة Telegram Application (يتم تنفيذه مباشرة عند تحميل الملف) ============
+logger.info("🔧 بدء تهيئة Telegram Application...")
+
+# إنشاء Application
+telegram_app = Application.builder().token(BOT_TOKEN).build()
+
+# إضافة handlers
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+telegram_app.add_handler(CallbackQueryHandler(button_callback))
+
+# تهيئة Application بشكل متزامن
+import asyncio
+
+try:
+    # استخدام event loop موجود أو إنشاء جديد
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    # تهيئة Application
+    loop.run_until_complete(telegram_app.initialize())
+    logger.info("✅ Telegram Application initialized successfully")
+except Exception as e:
+    logger.error(f"❌ فشل تهيئة Telegram Application: {e}")
+    telegram_app = None
 
 @flask_app.route('/')
 def home():
@@ -3962,24 +3988,17 @@ def webhook_info():
         return f"<h2>❌ خطأ:</h2><p>{str(e)}</p>", 500
 
 def main_webhook():
-    """تشغيل البوت بوضع Webhook"""
+    """تشغيل البوت بوضع Webhook (للاستخدام المحلي فقط)"""
     global telegram_app
 
     logger.info("🌐 بدء تشغيل Webhook mode...")
-
-    # إنشاء Application
-    telegram_app = Application.builder().token(BOT_TOKEN).build()
-
-    # إضافة handlers القديمة
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    telegram_app.add_handler(CallbackQueryHandler(button_callback))
-
-    # تهيئة Application
-    import asyncio
-    asyncio.run(telegram_app.initialize())
-
-    logger.info("✅ Telegram Application initialized")
+    
+    # التحقق من أن telegram_app تم تهيئته
+    if telegram_app is None:
+        logger.error("❌ Telegram Application لم يتم تهيئته!")
+        return
+    
+    logger.info("✅ Telegram Application جاهز")
 
     # محاولة تعيين webhook تلقائياً
     try:
