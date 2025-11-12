@@ -692,12 +692,12 @@ def cleanup_old_accounts(accounts: Dict) -> int:
     """
     🧹 تنظيف الحسابات القديمة (>50 ساعة بدون تحديث)
     
-    ✅ Features:
-    - In-place modification (بدون نسخ)
-    - Early exit لو مفيش حسابات قديمة
-    - Threshold protection (الحد الأدنى 5 حسابات)
-    - Zero disk I/O
-    - Minimal CPU usage
+    ✅ Lazy Timestamp Strategy:
+    - الحسابات المهمة (AVAILABLE, REFRESHING, TRANSFERRING) → تفضل 50 ساعة
+    - أي حالة تانية (WRONG DETAILS, ERROR, LOCKED, etc.) → تتمسح فوراً
+    - Zero resources overhead
+    - Flexible & Simple
+    - Auto-removes future unknown statuses
     
     Returns:
         int: عدد الحسابات المحذوفة
@@ -705,11 +705,14 @@ def cleanup_old_accounts(accounts: Dict) -> int:
     if not accounts:
         return 0
     
+    # ✅ الحالات المهمة اللي نخليها 50 ساعة
+    KEEP_STATUSES = ['AVAILABLE', 'REFRESHING', 'TRANSFERRING']
+    
     try:
         now = datetime.now()
-        cutoff_time = now - timedelta(hours=CLEANUP_AGE_HOURS)
+        cutoff_time = now - timedelta(hours=CLEANUP_AGE_HOURS)  # 50 ساعة
         
-        # جمع مفاتيح الحسابات القديمة
+        # جمع مفاتيح الحسابات اللي هنحذفها
         old_keys = []
         
         for key, data in accounts.items():
@@ -719,20 +722,22 @@ def cleanup_old_accounts(accounts: Dict) -> int:
                     continue
                 
                 last_check = datetime.fromisoformat(last_check_str)
+                status = data.get("last_known_status", "")
                 
-                # لو الحساب أقدم من 50 ساعة
-                if last_check < cutoff_time:
+                # ✅ القرار الذكي (Lazy Timestamp):
+                # احذف لو: (الحساب أقدم من 50 ساعة) AND (حالته مش من المهمين)
+                if last_check < cutoff_time and status not in KEEP_STATUSES:
                     old_keys.append(key)
                     
             except (ValueError, TypeError, AttributeError):
                 # لو في مشكلة في التاريخ، نتخطى الحساب ده
                 continue
         
-        # Early exit: لو مفيش حسابات قديمة كفاية
+        # Early exit: لو مفيش حسابات كفاية للحذف
         if len(old_keys) < CLEANUP_THRESHOLD:
             return 0
         
-        # حذف الحسابات القديمة (in-place)
+        # حذف الحسابات (in-place)
         for key in old_keys:
             del accounts[key]
         
@@ -740,6 +745,7 @@ def cleanup_old_accounts(accounts: Dict) -> int:
         if old_keys:
             save_monitored_accounts(accounts)
         
+        logger.info(f"🧹 Cleanup: Deleted {len(old_keys)} old accounts (non-critical statuses)")
         return len(old_keys)
         
     except Exception as e:
