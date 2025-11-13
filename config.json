@@ -1,12 +1,59 @@
 {
   "telegram": {
-    "bot_token": "YOUR_BOT_TOKEN_HERE",
-    "admin_ids": []
+    "bot_token": "YOUR",
+    "admin_ids": [
+      YOUR
+    ]
   },
   "website": {
+    "urls": {
+      "base": "YOUR",
+      "sender_page": "YOUR",
+      "add_api": "YOUR",
+      "search_api": "YOUR"
+    },
+    "cookies": {
+      "PHPSESSID": "YOUR",
+      "login_token": "YOUR",
+      "login_key": "YOUR"
+    },
     "defaults": {
-      "group_name": "PERM"
+      "group_name": " ",
+      "account_lock": "1",
+      "amount_take": "",
+      "amount_keep": "",
+      "priority": "",
+      "force_proxy": "",
+      "user_price": ""
     }
+  },
+  "api": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "google_sheet": {
+    "enabled": true,
+    "spreadsheet_id": "YOUR",
+    "sheet_name": "Sheet1",
+    "credentials_file": "credentials.json"
+  },
+  "queue": {
+    "pending_interval_min": 1,
+    "pending_interval_max": 10,
+    "retry_interval_min": 30,
+    "retry_interval_max": 60,
+    "max_retries": 50,
+    "log_dir": "logs"
+  },
+  "taken_handler": {
+    "enabled": true,
+    "columns": {
+      "AMOUNT_TAKEN": "C",
+      "DISABLED": "C"
+    },
+    "interval_min": 1,
+    "interval_max": 10
   },
   "notification_groups": {
     "enabled": true,
