@@ -646,6 +646,14 @@ def main():
     print("\n📊 Intelligent & Efficient!")
     print("=" * 60 + "\n")
 
+    # 🛡️ التحقق من إعدادات الإشعارات
+    try:
+        from core import validate_notification_config
+        validate_notification_config(CONFIG)
+    except Exception as e:
+        print(f"❌ Notification config validation failed: {e}")
+        print("⚠️ Bot will start, but notifications may not work properly!")
+
     # إنشاء API Manager
     api_manager = OptimizedAPIManager(CONFIG)
 

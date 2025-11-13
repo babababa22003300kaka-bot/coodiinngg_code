@@ -621,6 +621,127 @@ async def wait_for_status_change(
 
 
 # ═══════════════════════════════════════════════════════════════
+# 🎯 Smart Notification Groups System
+# ═══════════════════════════════════════════════════════════════
+
+
+def parse_group_id(value):
+    """
+    استخراج ID من أي تنسيق
+    
+    Examples:
+        -5088596401 → -5088596401
+        "🪪 The ID of متاح is: -5088596401" → -5088596401
+    """
+    if isinstance(value, int):
+        return value
+    
+    if isinstance(value, str):
+        # البحث عن أول رقم (سالب أو موجب)
+        match = re.search(r'-?\d+', value)
+        if match:
+            return int(match.group())
+    
+    raise ValueError(f"❌ Invalid group_id: {value}")
+
+
+def find_target_group(new_status: str, config: dict) -> Optional[int]:
+    """
+    🎯 إيجاد الجروب المناسب للحالة الجديدة
+    
+    Logic:
+    1. ابحث في الجروبات المخصصة (statuses غير فاضية)
+    2. لو لقيت تطابق → أرجع group_id
+    3. لو مفيش تطابق → Fallback (statuses فاضية)
+    
+    Returns:
+        int: group_id للإرسال إليه
+        None: لو النظام معطل أو مفيش Fallback
+    """
+    # 1. التحقق من التفعيل العام
+    notification_groups = config.get("notification_groups", {})
+    if not notification_groups.get("enabled", False):
+        logger.info("📵 Notification groups system is disabled")
+        return None
+    
+    # 2. تنظيف الحالة
+    normalized_status = new_status.strip().upper()
+    
+    # 3. البحث في الجروبات المخصصة
+    groups = notification_groups.get("groups", [])
+    fallback_group = None
+    
+    for group in groups:
+        if not group.get("enabled", True):
+            continue  # جروب معطل
+        
+        # تنظيف الحالات المخزنة
+        group_statuses = [s.strip().upper() for s in group.get("statuses", [])]
+        
+        # هل ده Fallback group؟
+        if not group_statuses:
+            fallback_group = group
+            continue
+        
+        # تطابق؟
+        if normalized_status in group_statuses:
+            group_id = parse_group_id(group.get("group_id"))
+            logger.info(f"✅ Status '{new_status}' → Group '{group.get('name')}' ({group_id})")
+            return group_id
+    
+    # 4. Fallback: لو مفيش تطابق
+    if fallback_group:
+        group_id = parse_group_id(fallback_group.get("group_id"))
+        logger.info(f"🔄 Status '{new_status}' → Fallback Group '{fallback_group.get('name')}' ({group_id})")
+        return group_id
+    
+    # 5. مفيش Fallback (مشكلة خطيرة!)
+    logger.warning(f"⚠️ No fallback group found! Status '{new_status}' will be skipped!")
+    return None
+
+
+def validate_notification_config(config: dict):
+    """
+    🛡️ التحقق من صحة إعدادات الإشعارات عند البدء
+    
+    Checks:
+    1. وجود Fallback group مفعّل (statuses فاضية)
+    2. صحة group_ids
+    """
+    notification_groups = config.get("notification_groups", {})
+    
+    if not notification_groups:
+        logger.warning("⚠️ No 'notification_groups' section in config.json")
+        return
+    
+    groups = notification_groups.get("groups", [])
+    
+    # 1. التحقق من وجود Fallback
+    has_fallback = False
+    for group in groups:
+        if not group.get("statuses") and group.get("enabled", True):
+            has_fallback = True
+            logger.info(f"✅ Fallback group found: '{group.get('name')}'")
+            break
+    
+    if not has_fallback:
+        logger.error("❌ CRITICAL: No enabled fallback group (empty statuses list)!")
+        logger.error("❌ Please add a group with 'statuses': [] and 'enabled': true")
+        raise ValueError("⚠️ Missing mandatory fallback group!")
+    
+    # 2. التحقق من IDs
+    for group in groups:
+        try:
+            group_id = parse_group_id(group.get("group_id"))
+            logger.debug(f"✅ Group '{group.get('name')}': ID = {group_id}")
+        except Exception as e:
+            logger.error(f"❌ Invalid group_id for '{group.get('name')}': {e}")
+            raise
+    
+    logger.info("✅ Notification config validation passed!")
+
+
+# ═══════════════════════════════════════════════════════════════
 # 📧 Notification Function with Source Display
 # ═══════════════════════════════════════════════════════════════
 
@@ -631,32 +752,45 @@ async def send_status_notification(
     account_id: str,
     old_status: str,
     new_status: str,
-    chat_id: int,
+    chat_id: int,  # ← محفوظ للتوافق، لكن سيتم تجاهله
     account_data: Dict,
-    source: str = "manual",  # 🆕 NEW PARAMETER
+    source: str = "manual",
+    config: dict = None,  # 🆕 NEW PARAMETER
 ):
     """
-    ✅ إرسال إشعار تغيير الحالة مع عرض المصدر
+    ✅ إرسال إشعار تغيير الحالة إلى الجروب المناسب
+    
+    🎯 Smart Routing:
+    - يختار الجروب المناسب حسب الحالة الجديدة
+    - يرسل لجروب واحد فقط (Exclusivity)
+    - يستخدم Fallback لو مفيش تطابق
     """
     try:
-        # Skip if no valid chat_id
-        if not chat_id:
-            logger.info(f"ℹ️ Skip notification for {email}: no chat_id")
+        # 1. تحميل الـ config لو مش موجود
+        if config is None:
+            import json
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+        
+        # 2. إيجاد الجروب المناسب
+        target_group_id = find_target_group(new_status, config)
+        
+        # 3. لو النظام معطل أو مفيش جروب
+        if target_group_id is None:
+            logger.info(f"ℹ️ Skip notification for {email}: No target group")
             return
-
+        
+        # 4. تجهيز الرسالة
         old_emoji = get_status_emoji(old_status)
         new_emoji = get_status_emoji(new_status)
-
         old_status_ar = get_status_description_ar(old_status)
         new_status_ar = get_status_description_ar(new_status)
-
-        # 🆕 Source line
         source_line = "🤖 المصدر: من البوت" if source == "bot" else "👤 المصدر: يدوي"
-
+        
         notification = (
             f"🔔 *تنبيه تغيير الحالة!*\n\n"
             f"📧 `{email}`\n"
-            f"{source_line}\n"  # 🆕 NEW LINE
+            f"{source_line}\n"
             f"🆔 ID: `{account_id}`\n\n"
             f"📊 *الحالة السابقة:*\n"
             f"   `{old_status}`\n"
@@ -666,19 +800,24 @@ async def send_status_notification(
             f"   {new_emoji} {new_status_ar}\n\n"
             f"🕐 الوقت: {datetime.now().strftime('%H:%M:%S')}\n"
         )
-
+        
         available = format_number(account_data.get("Available", "0"))
         taken = format_number(account_data.get("Taken", "0"))
-
+        
         if available != "0" or taken != "0":
             notification += f"\n💵 المتاح: {available}\n✅ المسحوب: {taken}\n"
-
+        
         notification += f"\n💡 `/search {email}` للتفاصيل"
-
+        
+        # 5. إرسال إلى الجروب المحدد
         await telegram_bot.send_message(
-            chat_id=chat_id, text=notification, parse_mode="Markdown"
+            chat_id=target_group_id, 
+            text=notification, 
+            parse_mode="Markdown"
         )
-
+        
+        logger.info(f"✅ Notification sent to group {target_group_id} for {email}")
+        
     except Exception as e:
         logger.error(f"❌ Failed to send notification: {e}")
 

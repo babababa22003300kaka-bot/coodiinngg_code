@@ -1,0 +1,40 @@
+{
+  "telegram": {
+    "bot_token": "YOUR_BOT_TOKEN_HERE",
+    "admin_ids": []
+  },
+  "website": {
+    "defaults": {
+      "group_name": "PERM"
+    }
+  },
+  "notification_groups": {
+    "enabled": true,
+    "groups": [
+      {
+        "enabled": true,
+        "name": "جميع الحالات",
+        "group_id": -5030130900,
+        "statuses": []
+      },
+      {
+        "enabled": true,
+        "name": "متاح",
+        "group_id": -5088596401,
+        "statuses": ["AVAILABLE"]
+      },
+      {
+        "enabled": true,
+        "name": "انتقالات",
+        "group_id": -5040383346,
+        "statuses": ["REFRESHING", "TRANSFERRING"]
+      },
+      {
+        "enabled": true,
+        "name": "انتهاء",
+        "group_id": -5017859898,
+        "statuses": ["AMOUNT_TAKEN", "DISABLED"]
+      }
+    ]
+  }
+}
