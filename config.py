@@ -73,6 +73,7 @@ FINAL_STATUSES: Set[str] = {
     "ERROR",
     "BLOCKED",
     "AMOUNT TAKEN",
+    "LOGIN UNAVAILABLE",  # 🆕 حالة تسجيل الدخول غير متاح
 }
 
 # Database files
@@ -101,6 +102,7 @@ STATUS_EMOJIS = {
     "ERROR": "❌",
     "WAITING": "⏳",
     "BLOCKED": "🚫",
+    "LOGIN UNAVAILABLE": "🎮",  # 🆕 حالة تسجيل الدخول غير متاح
 }
 
 # Status Descriptions (Arabic)
@@ -125,4 +127,5 @@ STATUS_DESCRIPTIONS_AR = {
     "ERROR": "خطأ عام",
     "WAITING": "منتظر",
     "BLOCKED": "محظور",
+    "LOGIN UNAVAILABLE": "🎮 لازم تدخل من الكونسول على Ultimate Team وتخرج وتبلغني ⚠️",  # 🆕 حالة تسجيل الدخول غير متاح
 }
