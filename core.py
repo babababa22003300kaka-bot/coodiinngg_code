@@ -46,9 +46,9 @@ with open("config.json", "r", encoding="utf-8") as f:
 # 🧹 Cleanup Configuration
 # ═══════════════════════════════════════════════════════════════
 
-CLEANUP_INTERVAL = 21600      # 6 ساعات بالثواني
-CLEANUP_AGE_HOURS = 50        # حذف الحسابات الأقدم من 50 ساعة
-CLEANUP_THRESHOLD = 5         # الحد الأدنى للتنفيذ
+CLEANUP_INTERVAL = 21600  # 6 ساعات بالثواني
+CLEANUP_AGE_HOURS = 50  # حذف الحسابات الأقدم من 50 ساعة
+CLEANUP_THRESHOLD = 5  # الحد الأدنى للتنفيذ
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -570,7 +570,7 @@ async def wait_for_status_change(
 
                 # 🆕 إضافة للمراقبة: AVAILABLE أو REFRESHING أو TRANSFERRING + جروب مطابق
                 added_to_monitor = False
-                
+
                 # قائمة الحالات المراقبة
                 monitored_statuses = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
 
@@ -586,6 +586,18 @@ async def wait_for_status_change(
                         )
                         added_to_monitor = True
                         logger.info(f"✅ Added {email} to monitoring ({status})")
+
+                # ✅ الحل النهائي: إرسال إشعار بالحالة النهائية قبل الخروج
+                await send_status_notification(
+                    message_obj._bot,     
+                    email,
+                    account_id,
+                    last_status or "UNKNOWN",
+                    status,
+                    chat_id,
+                    account_info,
+                    "bot",
+                )
 
                 # ✅ الحل الصحيح: إزالة الحساب الحالي فقط من قائمة الأهداف
                 smart_cache.deactivate_burst_target(account_id)
@@ -617,7 +629,7 @@ async def wait_for_status_change(
     if account_info:
         status = account_info.get("Status", "").upper()
         monitored_statuses = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
-        
+
         if status in monitored_statuses:
             group_name = account_info.get("Group", "")
             if group_name == default_group_name:
@@ -636,32 +648,32 @@ async def wait_for_status_change(
 def parse_group_id(value):
     """
     استخراج ID من أي تنسيق
-    
+
     Examples:
         -5088596401 → -5088596401
         "🪪 The ID of متاح is: -5088596401" → -5088596401
     """
     if isinstance(value, int):
         return value
-    
+
     if isinstance(value, str):
         # البحث عن أول رقم (سالب أو موجب)
-        match = re.search(r'-?\d+', value)
+        match = re.search(r"-?\d+", value)
         if match:
             return int(match.group())
-    
+
     raise ValueError(f"❌ Invalid group_id: {value}")
 
 
 def find_target_group(new_status: str, config: dict) -> Optional[int]:
     """
     🎯 إيجاد الجروب المناسب للحالة الجديدة
-    
+
     Logic:
     1. ابحث في الجروبات المخصصة (statuses غير فاضية)
     2. لو لقيت تطابق → أرجع group_id
     3. لو مفيش تطابق → Fallback (statuses فاضية)
-    
+
     Returns:
         int: group_id للإرسال إليه
         None: لو النظام معطل أو مفيش Fallback
@@ -671,38 +683,42 @@ def find_target_group(new_status: str, config: dict) -> Optional[int]:
     if not notification_groups.get("enabled", False):
         logger.info("📵 Notification groups system is disabled")
         return None
-    
+
     # 2. تنظيف الحالة
     normalized_status = new_status.strip().upper()
-    
+
     # 3. البحث في الجروبات المخصصة
     groups = notification_groups.get("groups", [])
     fallback_group = None
-    
+
     for group in groups:
         if not group.get("enabled", True):
             continue  # جروب معطل
-        
+
         # تنظيف الحالات المخزنة
         group_statuses = [s.strip().upper() for s in group.get("statuses", [])]
-        
+
         # هل ده Fallback group؟
         if not group_statuses:
             fallback_group = group
             continue
-        
+
         # تطابق؟
         if normalized_status in group_statuses:
             group_id = parse_group_id(group.get("group_id"))
-            logger.info(f"✅ Status '{new_status}' → Group '{group.get('name')}' ({group_id})")
+            logger.info(
+                f"✅ Status '{new_status}' → Group '{group.get('name')}' ({group_id})"
+            )
             return group_id
-    
+
     # 4. Fallback: لو مفيش تطابق
     if fallback_group:
         group_id = parse_group_id(fallback_group.get("group_id"))
-        logger.info(f"🔄 Status '{new_status}' → Fallback Group '{fallback_group.get('name')}' ({group_id})")
+        logger.info(
+            f"🔄 Status '{new_status}' → Fallback Group '{fallback_group.get('name')}' ({group_id})"
+        )
         return group_id
-    
+
     # 5. مفيش Fallback (مشكلة خطيرة!)
     logger.warning(f"⚠️ No fallback group found! Status '{new_status}' will be skipped!")
     return None
@@ -711,19 +727,19 @@ def find_target_group(new_status: str, config: dict) -> Optional[int]:
 def validate_notification_config(config: dict):
     """
     🛡️ التحقق من صحة إعدادات الإشعارات عند البدء
-    
+
     Checks:
     1. وجود Fallback group مفعّل (statuses فاضية)
     2. صحة group_ids
     """
     notification_groups = config.get("notification_groups", {})
-    
+
     if not notification_groups:
         logger.warning("⚠️ No 'notification_groups' section in config.json")
         return
-    
+
     groups = notification_groups.get("groups", [])
-    
+
     # 1. التحقق من وجود Fallback
     has_fallback = False
     for group in groups:
@@ -731,12 +747,12 @@ def validate_notification_config(config: dict):
             has_fallback = True
             logger.info(f"✅ Fallback group found: '{group.get('name')}'")
             break
-    
+
     if not has_fallback:
         logger.error("❌ CRITICAL: No enabled fallback group (empty statuses list)!")
         logger.error("❌ Please add a group with 'statuses': [] and 'enabled': true")
         raise ValueError("⚠️ Missing mandatory fallback group!")
-    
+
     # 2. التحقق من IDs
     for group in groups:
         try:
@@ -745,7 +761,7 @@ def validate_notification_config(config: dict):
         except Exception as e:
             logger.error(f"❌ Invalid group_id for '{group.get('name')}': {e}")
             raise
-    
+
     logger.info("✅ Notification config validation passed!")
 
 
@@ -760,38 +776,41 @@ async def send_status_notification(
     account_id: str,
     old_status: str,
     new_status: str,
-    chat_id: int,  # محفوظ للتوافق
+    chat_id: int,  # محفوظ للتوافق، لكن لن يتم استخدامه مباشرة
     account_data: Dict,
     source: str = "manual",
 ):
     """
     ✅ إرسال إشعار تغيير الحالة إلى الجروب المناسب
-    
+
     🎯 Smart Routing:
     - يختار الجروب المناسب حسب الحالة الجديدة
     - يرسل لجروب واحد فقط (Exclusivity)
     - يستخدم Fallback لو مفيش تطابق
-    
+
     ⚡ Performance:
     - يستخدم CONFIG المُحمَّل مسبقاً (مرة واحدة عند البدء)
     - مفيش file I/O متكرر
     """
     try:
-        # إيجاد الجروب المناسب (استخدام CONFIG العالمي)
+        # 🎯 الخطوة 1: إيجاد الجروب المناسب باستخدام النظام الجديد
+        # نحن نستخدم المتغير العالمي CONFIG الذي تم تحميله في بداية الملف
         target_group_id = find_target_group(new_status, CONFIG)
-        
-        # 3. لو النظام معطل أو مفيش جروب
+
+        # 🎯 الخطوة 2: التحقق مما إذا كان هناك جروب مستهدف
         if target_group_id is None:
-            logger.info(f"ℹ️ Skip notification for {email}: No target group")
+            logger.info(
+                f"ℹ️ Skip notification for {email}: No target group found or system disabled."
+            )
             return
-        
-        # 4. تجهيز الرسالة
+
+        # 🎯 الخطوة 3: تجهيز الرسالة (هذا الجزء سليم ولا يحتاج تعديل)
         old_emoji = get_status_emoji(old_status)
         new_emoji = get_status_emoji(new_status)
         old_status_ar = get_status_description_ar(old_status)
         new_status_ar = get_status_description_ar(new_status)
         source_line = "🤖 المصدر: من البوت" if source == "bot" else "👤 المصدر: يدوي"
-        
+
         notification = (
             f"🔔 *تنبيه تغيير الحالة!*\n\n"
             f"📧 `{email}`\n"
@@ -805,24 +824,26 @@ async def send_status_notification(
             f"   {new_emoji} {new_status_ar}\n\n"
             f"🕐 الوقت: {datetime.now().strftime('%H:%M:%S')}\n"
         )
-        
+
         available = format_number(account_data.get("Available", "0"))
         taken = format_number(account_data.get("Taken", "0"))
-        
+
         if available != "0" or taken != "0":
             notification += f"\n💵 المتاح: {available}\n✅ المسحوب: {taken}\n"
-        
+
         notification += f"\n💡 `/search {email}` للتفاصيل"
-        
-        # 5. إرسال إلى الجروب المحدد
+
+        # 🎯 الخطوة 4: إرسال الإشعار إلى الجروب الصحيح
         await telegram_bot.send_message(
-            chat_id=target_group_id, 
-            text=notification, 
-            parse_mode="Markdown"
+            chat_id=target_group_id,  # ⬅️ الأهم: استخدام المتغير الجديد هنا
+            text=notification,
+            parse_mode="Markdown",
         )
-        
-        logger.info(f"✅ Notification sent to group {target_group_id} for {email}")
-        
+
+        logger.info(
+            f"✅ Notification sent to group {target_group_id} for status '{new_status}'"
+        )
+
     except Exception as e:
         logger.error(f"❌ Failed to send notification: {e}")
 
@@ -835,63 +856,65 @@ async def send_status_notification(
 def cleanup_old_accounts(accounts: Dict) -> int:
     """
     🧹 تنظيف الحسابات القديمة (>50 ساعة بدون تحديث)
-    
+
     ✅ Lazy Timestamp Strategy:
     - الحسابات المهمة (AVAILABLE, REFRESHING, TRANSFERRING) → تفضل 50 ساعة
     - أي حالة تانية (WRONG DETAILS, ERROR, LOCKED, etc.) → تتمسح فوراً
     - Zero resources overhead
     - Flexible & Simple
     - Auto-removes future unknown statuses
-    
+
     Returns:
         int: عدد الحسابات المحذوفة
     """
     if not accounts:
         return 0
-    
+
     # ✅ الحالات المهمة اللي نخليها 50 ساعة
-    KEEP_STATUSES = ['AVAILABLE', 'REFRESHING', 'TRANSFERRING']
-    
+    KEEP_STATUSES = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
+
     try:
         now = datetime.now()
         cutoff_time = now - timedelta(hours=CLEANUP_AGE_HOURS)  # 50 ساعة
-        
+
         # جمع مفاتيح الحسابات اللي هنحذفها
         old_keys = []
-        
+
         for key, data in accounts.items():
             try:
                 last_check_str = data.get("last_check")
                 if not last_check_str:
                     continue
-                
+
                 last_check = datetime.fromisoformat(last_check_str)
                 status = data.get("last_known_status", "")
-                
+
                 # ✅ القرار الذكي (Lazy Timestamp):
                 # احذف لو: (الحساب أقدم من 50 ساعة) AND (حالته مش من المهمين)
                 if last_check < cutoff_time and status not in KEEP_STATUSES:
                     old_keys.append(key)
-                    
+
             except (ValueError, TypeError, AttributeError):
                 # لو في مشكلة في التاريخ، نتخطى الحساب ده
                 continue
-        
+
         # Early exit: لو مفيش حسابات كفاية للحذف
         if len(old_keys) < CLEANUP_THRESHOLD:
             return 0
-        
+
         # حذف الحسابات (in-place)
         for key in old_keys:
             del accounts[key]
-        
+
         # حفظ التغييرات
         if old_keys:
             save_monitored_accounts(accounts)
-        
-        logger.info(f"🧹 Cleanup: Deleted {len(old_keys)} old accounts (non-critical statuses)")
+
+        logger.info(
+            f"🧹 Cleanup: Deleted {len(old_keys)} old accounts (non-critical statuses)"
+        )
         return len(old_keys)
-        
+
     except Exception as e:
         logger.error(f"⚠️ Cleanup error: {e}")
         return 0
@@ -940,7 +963,7 @@ async def continuous_monitor(
             auto_added = False
             # 🆕 قائمة الحالات المراقبة
             monitored_statuses = ["AVAILABLE", "REFRESHING", "TRANSFERRING"]
-            
+
             for account in all_accounts:
                 account_id = account.get("idAccount")
                 account_status = account.get("Status", "").upper()
@@ -970,7 +993,9 @@ async def continuous_monitor(
                 )
                 existing_ids.add(account_id)
                 auto_added = True
-                logger.info(f"✅ Auto-monitored {email} ({account_status} + default group)")
+                logger.info(
+                    f"✅ Auto-monitored {email} ({account_status} + default group)"
+                )
 
             # Reload if auto-added
             if auto_added:
@@ -1039,16 +1064,16 @@ async def continuous_monitor(
 
                         update_monitored_account_status(account_id, current_status)
 
-                        # ✅ إرسال الإشعار مع المصدر
+                        # ✅ الحل النهائي: استدعاء دالة الإشعارات مرة واحدة فقط
                         await send_status_notification(
                             telegram_bot,
                             email,
                             account_id,
                             last_status,
                             current_status,
-                            data["chat_id"],
+                            data["chat_id"],  # سيتم تجاهل هذا الرقم
                             account_info,
-                            data.get("source", "manual"),  # 🆕 pass source
+                            data.get("source", "manual"),
                         )
                     else:
                         update_monitored_account_status(account_id, current_status)
@@ -1060,15 +1085,19 @@ async def continuous_monitor(
             smart_cache.adjust_ttl(changes_detected)
 
             # 🧹 Cleanup old accounts (every 6 hours)
-            if not hasattr(cleanup_old_accounts, 'last_run'):
+            if not hasattr(cleanup_old_accounts, "last_run"):
                 cleanup_old_accounts.last_run = datetime.now()
 
-            time_since_cleanup = (datetime.now() - cleanup_old_accounts.last_run).total_seconds()
+            time_since_cleanup = (
+                datetime.now() - cleanup_old_accounts.last_run
+            ).total_seconds()
 
             if time_since_cleanup >= CLEANUP_INTERVAL:
                 removed_count = cleanup_old_accounts(accounts)
                 if removed_count > 0:
-                    logger.info(f"🧹 Cleaned {removed_count} old accounts (>50h inactive)")
+                    logger.info(
+                        f"🧹 Cleaned {removed_count} old accounts (>50h inactive)"
+                    )
                 cleanup_old_accounts.last_run = datetime.now()
 
             # فترة الانتظار
@@ -1076,7 +1105,10 @@ async def continuous_monitor(
 
             if "LOGGING" in statuses:
                 cycle_delay = random.uniform(10, 20)
-            elif any(s in statuses for s in ["AVAILABLE", "ACTIVE", "REFRESHING", "TRANSFERRING"]):
+            elif any(
+                s in statuses
+                for s in ["AVAILABLE", "ACTIVE", "REFRESHING", "TRANSFERRING"]
+            ):
                 cycle_delay = random.uniform(30, 60)
             else:
                 cycle_delay = random.uniform(60, 120)
