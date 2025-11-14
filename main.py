@@ -9,17 +9,17 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
-    CallbackQueryHandler,
 )
-from datetime import datetime, timezone
 
 from api_manager import OptimizedAPIManager, smart_cache
 from config import FINAL_STATUSES, TRANSITIONAL_STATUSES
@@ -117,12 +117,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def monitor_account_task(api_manager, email, msg, chat_id, group_name):
     """
     🚀 Task منفصل لمراقبة الحساب (يدعم 10 متزامنين)
+
+    ✅ النسخة النهائية المحسّنة:
+       - تشغل المراقبة في الخلفية.
+       - بعد انتهاء المراقبة، تقوم بتعديل الرسالة الأصلية إلى رسالة تأكيد مختصرة.
     """
-    # 🔥 انتظار مكان شاغر (الحد الأقصى 10)
-    async with monitoring_semaphore:
-        try:
-            # 🆕 مراقبة الحساب
-            monitoring_success, account_info = await wait_for_status_change(
+    try:
+        async with monitoring_semaphore:
+            # قم بتشغيل المراقبة وانتظر النتيجة.
+            # دالة wait_for_status_change بداخلها ستقوم بإرسال الإشعار النهائي للجروب الصحيح.
+            await wait_for_status_change(
                 api_manager,
                 email,
                 msg,
@@ -130,49 +134,31 @@ async def monitor_account_task(api_manager, email, msg, chat_id, group_name):
                 group_name,
             )
 
-            if account_info:
-                status = account_info.get("Status", "غير محدد")
-                status_ar = get_status_description_ar(status)
-                account_id = account_info.get("idAccount", "N/A")
+        # ✅ بعد انتهاء المراقبة بنجاح، قم بتعديل الرسالة الأصلية إلى رسالة تأكيد بسيطة.
+        final_text = (
+            f"✅ *اكتملت المراقبة الأولية*\n\n"
+            f"📧 `{email}`\n\n"
+            f"تم إرسال الإشعار النهائي إلى الجروب المخصص."
+        )
 
-                result_text = (
-                    f"✅ *تمت الإضافة بنجاح!*\n\n"
-                    f"📧 `{email}`\n"
-                    f"🆔 ID: `{account_id}`\n"
-                    f"📊 *تمت الإضافة لـ Google Sheets*\n\n"
-                    f"📊 *الحالة النهائية:*\n"
-                    f"   `{status}`\n"
-                    f"   {get_status_emoji(status)} {status_ar}\n\n"
-                )
+        await msg.edit_text(final_text, parse_mode="Markdown")
+        logger.info(
+            f"✅ Initial monitoring task for {email} finished. User notified in private chat."
+        )
 
-                # 🆕 عرض حالة الإضافة للمراقبة
-                if status.upper() == "AVAILABLE":
-                    group_name_acc = account_info.get("Group", "")
-                    if group_name_acc == group_name:
-                        result_text += f"🔄 *تم إدراجه في المراقبة (المصدر: البوت)*\n"
-                    else:
-                        result_text += f"ℹ️ *لم يتم إدراجه في المراقبة (الجروب مختلف: {group_name_acc})*\n"
-                elif status.upper() in ["WRONG DETAILS", "BACKUP CODE WRONG"]:
-                    result_text += f"⚠️ *تحتاج مراجعة!*\n"
-
-                available = format_number(account_info.get("Available", "0"))
-                taken = format_number(account_info.get("Taken", "0"))
-
-                if available != "0" or taken != "0":
-                    result_text += f"\n💵 المتاح: {available}\n✅ المسحوب: {taken}"
-
-                await msg.edit_text(result_text, parse_mode="Markdown")
-            else:
-                await msg.edit_text(
-                    f"⚠️ *تمت الإضافة لكن لم يتم العثور على الحساب*\n"
-                    f"📧 `{email}`\n"
-                    f"💡 جرب `/search {email}` بعد قليل",
-                    parse_mode="Markdown",
-                )
-
-        except Exception as e:
-            logger.exception(f"❌ Monitoring error: {email}")
-            await msg.edit_text(f"❌ خطأ في المراقبة: {str(e)}")
+    except Exception as e:
+        # في حالة حدوث خطأ فادح، أبلغ المستخدم في الخاص.
+        logger.exception(
+            f"❌ A critical error occurred during initial monitoring for {email}"
+        )
+        try:
+            await msg.edit_text(
+                f"❌ حدث خطأ فادح أثناء مراقبة {email}:\n`{str(e)}`",
+                parse_mode="Markdown",
+            )
+        except Exception as inner_e:
+            # تجاهل أي أخطاء في تعديل الرسالة نفسها لتجنب انهيار البوت.
+            logger.error(f"Failed to edit error message for {email}: {inner_e}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,15 +297,15 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def monitored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /monitored - عرض الحسابات المراقبة مع pagination"""
     admin_ids = CONFIG["telegram"].get("admin_ids", [])
-    
+
     if not is_admin(update.effective_user.id, admin_ids):
         return
-    
+
     accounts = load_monitored_accounts()
     if not accounts:
         await update.message.reply_text("📭 لا توجد حسابات تحت المراقبة حالياً")
         return
-    
+
     # ✅ عرض الصفحة الأولى
     await send_monitored_page(update.message, page=1, accounts=accounts)
 
@@ -327,35 +313,33 @@ async def monitored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def create_pagination_keyboard(page: int, total_pages: int) -> InlineKeyboardMarkup:
     """
     إنشاء أزرار التنقل بين الصفحات
-    
+
     Format: [⬅️ السابق] [1/5] [التالي ➡️]
     """
     buttons = []
-    
+
     # زر السابق (يظهر فقط لو مش في الصفحة الأولى)
     if page > 1:
         buttons.append(
             InlineKeyboardButton("⬅️ السابق", callback_data=f"mp:{page-1}:{total_pages}")
         )
-    
+
     # زر الصفحة الحالية (غير قابل للضغط)
-    buttons.append(
-        InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop")
-    )
-    
+    buttons.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+
     # زر التالي (يظهر فقط لو مش في آخر صفحة)
     if page < total_pages:
         buttons.append(
             InlineKeyboardButton("التالي ➡️", callback_data=f"mp:{page+1}:{total_pages}")
         )
-    
+
     return InlineKeyboardMarkup([buttons])
 
 
 async def send_monitored_page(message, page: int, accounts: dict):
     """
     عرض صفحة من الحسابات المراقبة (رسالة جديدة)
-    
+
     Args:
         message: رسالة التليجرام
         page: رقم الصفحة (يبدأ من 1)
@@ -364,22 +348,22 @@ async def send_monitored_page(message, page: int, accounts: dict):
     items_per_page = 10  # ✅ 10 حسابات لكل صفحة
     accounts_list = list(accounts.items())
     total_accounts = len(accounts_list)
-    
+
     # حساب عدد الصفحات
     total_pages = max(1, (total_accounts + items_per_page - 1) // items_per_page)
-    
+
     # التأكد من رقم الصفحة صحيح
     page = max(1, min(page, total_pages))
-    
+
     # حساب الحسابات المعروضة في الصفحة الحالية
     start_idx = (page - 1) * items_per_page
     end_idx = start_idx + items_per_page
     page_accounts = accounts_list[start_idx:end_idx]
-    
+
     # بناء النص
     text = f"📊 *الحسابات المراقبة* (صفحة {page}/{total_pages})\n"
     text += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    
+
     for idx, (key, data) in enumerate(page_accounts, start=start_idx + 1):
         email = data.get("email", "unknown")
         status = data.get("last_known_status", "N/A")
@@ -387,22 +371,22 @@ async def send_monitored_page(message, page: int, accounts: dict):
         source = "🤖" if data.get("source") == "bot" else "👤"
         # ✅ سطر واحد بسيط لكل حساب
         text += f"{idx}. {source} `{email}` | {status_emoji} `{status}`\n"
-    
+
     text += f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
     text += f"📈 الإجمالي: {total_accounts} حساب"
-    
+
     # إضافة أزرار التنقل (لو في أكتر من صفحة)
     keyboard = None
     if total_pages > 1:
         keyboard = create_pagination_keyboard(page, total_pages)
-    
+
     await message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def update_monitored_page(message, page: int, accounts: dict):
     """
     تحديث صفحة موجودة (عند التنقل بين الصفحات)
-    
+
     نفس المنطق تماماً، لكن بدل reply_text نستخدم edit_text
     """
     items_per_page = 10
@@ -410,77 +394,78 @@ async def update_monitored_page(message, page: int, accounts: dict):
     total_accounts = len(accounts_list)
     total_pages = max(1, (total_accounts + items_per_page - 1) // items_per_page)
     page = max(1, min(page, total_pages))
-    
+
     start_idx = (page - 1) * items_per_page
     end_idx = start_idx + items_per_page
     page_accounts = accounts_list[start_idx:end_idx]
-    
+
     text = f"📊 *الحسابات المراقبة* (صفحة {page}/{total_pages})\n"
     text += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    
+
     for idx, (key, data) in enumerate(page_accounts, start=start_idx + 1):
         email = data.get("email", "unknown")
         status = data.get("last_known_status", "N/A")
         status_emoji = get_status_emoji(status)
         source = "🤖" if data.get("source") == "bot" else "👤"
         text += f"{idx}. {source} `{email}` | {status_emoji} `{status}`\n"
-    
+
     text += f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
     text += f"📈 الإجمالي: {total_accounts} حساب"
-    
+
     keyboard = None
     if total_pages > 1:
         keyboard = create_pagination_keyboard(page, total_pages)
-    
+
     # ✅ استخدام edit_text بدل reply_text
     await message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
-async def handle_monitored_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_monitored_pagination(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     """
     معالج التنقل بين صفحات /monitored
-    
+
     Callback data format: mp:page:total_pages
     مثال: mp:2:10 (الصفحة 2 من 10)
     """
     query = update.callback_query
-    
+
     try:
         # ✅ فك تشفير البيانات
         parts = query.data.split(":")
         if len(parts) != 3:
             raise ValueError("Invalid callback data format")
-        
+
         _, page_str, total_pages_str = parts
         page = int(page_str)
         total_pages = int(total_pages_str)
-        
+
         # ✅ التحقق من صحة رقم الصفحة
         if page < 1 or page > total_pages:
             await query.answer("❌ رقم صفحة غير صحيح", show_alert=True)
             return
-        
+
         # ✅ التحقق من timeout (60 ثانية)
         message_time = query.message.date
         current_time = datetime.now(timezone.utc)  # ✅ FIX: استخدام timezone.utc
         time_diff = (current_time - message_time).total_seconds()
-        
+
         if time_diff > 60:
             await query.answer(
-                "⚠️ انتهت صلاحية القائمة. استخدم /monitored مرة أخرى.",
-                show_alert=True
+                "⚠️ انتهت صلاحية القائمة. استخدم /monitored مرة أخرى.", show_alert=True
             )
             return
-        
+
         # ✅ تحميل الحسابات وعرض الصفحة
         accounts = load_monitored_accounts()
         if not accounts:
             await query.answer("❌ لا توجد حسابات", show_alert=True)
             return
-        
+
         await update_monitored_page(query.message, page, accounts)
         await query.answer()  # ✅ إشعار بسيط (بدون نص)
-        
+
     except ValueError as e:
         # ✅ معالجة أخطاء البيانات غير الصحيحة
         logger.warning(f"Invalid pagination data: {query.data} - {e}")
@@ -649,6 +634,7 @@ def main():
     # 🛡️ التحقق من إعدادات الإشعارات
     try:
         from core import validate_notification_config
+
         validate_notification_config(CONFIG)
     except Exception as e:
         print(f"❌ Notification config validation failed: {e}")
@@ -671,7 +657,7 @@ def main():
     telegram_app.add_handler(CommandHandler("monitored", monitored_command))
     telegram_app.add_handler(CommandHandler("stats", stats_command))
     telegram_app.add_handler(CommandHandler("status", status_command))
-    
+
     # ✅ معالجات الـ pagination
     telegram_app.add_handler(
         CallbackQueryHandler(handle_monitored_pagination, pattern="^mp:")
@@ -679,7 +665,7 @@ def main():
     telegram_app.add_handler(
         CallbackQueryHandler(handle_noop_callback, pattern="^noop$")
     )
-    
+
     telegram_app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
     )
