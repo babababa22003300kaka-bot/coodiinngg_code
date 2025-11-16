@@ -81,5 +81,13 @@
         "statuses": ["AMOUNT_TAKEN", "DISABLED"]
       }
     ]
+  },
+  "sheets_error_notifications": {
+    "enabled": true,
+    "resend_interval": 40,
+    "max_fast_retries": 3,
+    "slow_resend_interval": 120,
+    "auto_resolve_timeout": 60,
+    "group_id": -1003316228411
   }
 }

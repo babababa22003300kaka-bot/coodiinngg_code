@@ -14,6 +14,8 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from .error_notifier import track_sheets_errors
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +92,7 @@ class GoogleSheetsAPI:
         except Exception as e:
             logger.warning(f"⚠️ Could not verify/set ID header: {e}")
 
+    @track_sheets_errors(operation="append_emails", worker="google_api")
     def append_emails(self, emails_data: List[Dict]) -> Tuple[bool, str]:
         """
         ✅ إضافة Email + ID للشيت (نفس سلوك الكود القديم)

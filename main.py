@@ -601,10 +601,10 @@ async def post_init(application: Application):
         logger.info("🌐 Starting Web API...")
         asyncio.create_task(start_web_api(CONFIG, api_manager))
 
-    # تشغيل Google Sheets Worker
+    # تشغيل Google Sheets Worker (with error notifications)
     if CONFIG.get("google_sheet", {}).get("enabled", False):
         logger.info("📊 Starting Google Sheets Worker...")
-        asyncio.create_task(start_sheet_worker(CONFIG))
+        asyncio.create_task(start_sheet_worker(CONFIG, application))
 
     logger.info("✅ System ready!")
 
