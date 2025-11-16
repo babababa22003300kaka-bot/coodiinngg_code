@@ -11,6 +11,7 @@ import logging
 import random
 from typing import Dict
 
+from .error_notifier import start_error_notification_worker, track_sheets_errors
 from .google_api import GoogleSheetsAPI
 from .id_history import add_ids_to_history
 from .logger import WeeklyLogger
@@ -35,6 +36,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@track_sheets_errors(operation="pending_worker", worker="worker")
 async def pending_worker(
     config: Dict, sheets_api: GoogleSheetsAPI, weekly_log: WeeklyLogger
 ):
@@ -103,6 +105,7 @@ async def pending_worker(
             await asyncio.sleep(30)
 
 
+@track_sheets_errors(operation="retry_worker", worker="worker")
 async def retry_worker(
     config: Dict, sheets_api: GoogleSheetsAPI, weekly_log: WeeklyLogger
 ):
@@ -180,12 +183,13 @@ async def retry_worker(
             await asyncio.sleep(60)
 
 
-async def start_sheet_worker(config: Dict):
+async def start_sheet_worker(config: Dict, telegram_app=None):
     """
-    تشغيل الـ Google Sheets Workers (2 أو 3 workers)
+    تشغيل الـ Google Sheets Workers (2 أو 3 workers + error notifier)
 
     Args:
         config: إعدادات التطبيق
+        telegram_app: Telegram Application instance (لإرسال إشعارات الأخطاء)
     """
     try:
         sheet_config = config.get("google_sheet", {})
@@ -216,6 +220,13 @@ async def start_sheet_worker(config: Dict):
             workers.append(start_taken_worker(config, sheets_api))
         else:
             logger.info("🚀 Starting Google Sheets workers (pending + retry only)...")
+
+        # ✅ إضافة Error Notification Worker إذا كان مفعّل
+        if config.get("sheets_error_notifications", {}).get("enabled", False) and telegram_app:
+            logger.info("🚨 Starting Error Notification Worker...")
+            workers.append(start_error_notification_worker(config, telegram_app.bot))
+        else:
+            logger.info("⚪ Error Notification Worker disabled or no bot available")
 
         await asyncio.gather(*workers)
 

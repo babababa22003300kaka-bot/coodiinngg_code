@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .error_notifier import track_sheets_errors
+
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════
@@ -244,6 +246,7 @@ def find_row_by_id(sheets_api, account_id: str) -> Optional[int]:
 # ═══════════════════════════════════════════════════════════════
 
 
+@track_sheets_errors(operation="update_sheet_cell", worker="taken")
 def update_sheet_cell(
     sheets_api, row_number: int, column_letter: str, value: str
 ) -> Tuple[bool, str]:
@@ -286,6 +289,7 @@ def update_sheet_cell(
 # ═══════════════════════════════════════════════════════════════
 
 
+@track_sheets_errors(operation="taken_worker", worker="taken")
 async def taken_worker(config: Dict, sheets_api):
     """
     🔄 Worker معالجة الكوينز المسحوبة
