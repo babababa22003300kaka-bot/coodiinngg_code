@@ -120,7 +120,7 @@ async def monitor_account_task(api_manager, email, msg, chat_id, group_name):
 
     ✅ النسخة النهائية المحسّنة:
        - تشغل المراقبة في الخلفية.
-       - بعد انتهاء المراقبة، تقوم بتعديل الرسالة الأصلية إلى رسالة تأكيد مختصرة.
+       - بعد انتهاء المراقبة، تقوم بتعديل الرسالة الأصلية إلى رسالة تأكيد مختصرة مع الحالة النهائية.
     """
     try:
         async with monitoring_semaphore:
@@ -134,16 +134,32 @@ async def monitor_account_task(api_manager, email, msg, chat_id, group_name):
                 group_name,
             )
 
-        # ✅ بعد انتهاء المراقبة بنجاح، قم بتعديل الرسالة الأصلية إلى رسالة تأكيد بسيطة.
+        # ✅ بعد انتهاء المراقبة بنجاح، احصل على الحالة النهائية
+        final_status = "N/A"
+        status_emoji = "❓"
+        status_ar = "غير محدد"
+
+        try:
+            result = await api_manager.search_sender_by_email(email)
+            if result:
+                final_status = result.get("Status", "N/A")
+                status_emoji = get_status_emoji(final_status)
+                status_ar = get_status_description_ar(final_status)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to get final status for {email}: {e}")
+
+        # ✅ قم بتعديل الرسالة الأصلية إلى رسالة تأكيد مع الحالة النهائية
         final_text = (
             f"✅ *اكتملت المراقبة الأولية*\n\n"
             f"📧 `{email}`\n\n"
-            f"تم إرسال الإشعار النهائي إلى الجروب المخصص."
+            f"📊 *الحالة النهائية:*\n"
+            f"   {status_emoji} `{final_status}`\n"
+            f"   {status_ar}"
         )
 
         await msg.edit_text(final_text, parse_mode="Markdown")
         logger.info(
-            f"✅ Initial monitoring task for {email} finished. User notified in private chat."
+            f"✅ Initial monitoring task for {email} finished with status: {final_status}"
         )
 
     except Exception as e:
@@ -581,32 +597,46 @@ async def post_init(application: Application):
     logger.info("🔧 Initializing API Manager...")
     await api_manager.initialize()
 
-    # 🆕 تمرير parameters للمراقب
+    # ------------------- تشغيل الـ Workers الأساسية -------------------
+
+    # المراقب المستمر للحسابات
     default_group_name = CONFIG["website"]["defaults"]["group_name"]
     admin_ids = CONFIG["telegram"].get("admin_ids", [])
     default_chat_id = admin_ids[0] if admin_ids else None
-
     logger.info("🔄 Starting background monitor (with auto-discovery)...")
     asyncio.create_task(
         continuous_monitor(
             api_manager,
             application.bot,
-            default_group_name,  # 🆕 NEW PARAMETER
-            default_chat_id,  # 🆕 NEW PARAMETER
+            default_group_name,
+            default_chat_id,
         )
     )
 
-    # تشغيل Web API
+    # Web API (إذا كان مفعّلاً)
     if CONFIG.get("api", {}).get("enabled", False):
         logger.info("🌐 Starting Web API...")
         asyncio.create_task(start_web_api(CONFIG, api_manager))
 
-    # تشغيل Google Sheets Worker (with error notifications)
-    if CONFIG.get("google_sheet", {}).get("enabled", False):
-        logger.info("📊 Starting Google Sheets Worker...")
-        asyncio.create_task(start_sheet_worker(CONFIG, application))
+    # ------------------- تشغيل أنظمة Google Sheets -------------------
 
-    logger.info("✅ System ready!")
+    # استيراد الـ workers اللازمة من مجلد sheets
+    from sheets.error_notifier import start_error_notification_worker
+    from sheets.worker import start_sheet_worker
+
+    # ✅ تشغيل نظام إشعارات الأخطاء أولاً وبشكل مستقل
+    if CONFIG.get("sheets_error_notifications", {}).get("enabled", False):
+        logger.info("🚨 Starting Sheets Error Notification Worker...")
+        asyncio.create_task(start_error_notification_worker(CONFIG, application.bot))
+    else:
+        logger.info("⚪ Sheets Error Notification Worker is disabled.")
+
+    # ✅ تشغيل الـ workers الخاصة بـ Google Sheets (بدون تمرير application)
+    if CONFIG.get("google_sheet", {}).get("enabled", False):
+        logger.info("📊 Starting Google Sheets Data Workers...")
+        asyncio.create_task(start_sheet_worker(CONFIG))
+
+    logger.info("✅ System is fully operational!")
 
 
 def main():

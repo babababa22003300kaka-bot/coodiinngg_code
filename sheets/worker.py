@@ -183,13 +183,11 @@ async def retry_worker(
             await asyncio.sleep(60)
 
 
-async def start_sheet_worker(config: Dict, telegram_app=None):
+@track_sheets_errors(operation="start_sheet_worker", worker="startup")
+async def start_sheet_worker(config: Dict):
     """
-    تشغيل الـ Google Sheets Workers (2 أو 3 workers + error notifier)
-
-    Args:
-        config: إعدادات التطبيق
-        telegram_app: Telegram Application instance (لإرسال إشعارات الأخطاء)
+    تشغيل الـ Workers الخاصة ببيانات Google Sheets (pending, retry, taken).
+    نظام إشعارات الأخطاء يتم تشغيله بشكل مستقل من main.py.
     """
     try:
         sheet_config = config.get("google_sheet", {})
@@ -198,37 +196,41 @@ async def start_sheet_worker(config: Dict, telegram_app=None):
         sheet_name = sheet_config.get("sheet_name", "Emails")
 
         if not spreadsheet_id:
-            logger.error("❌ Google Sheet ID not configured!")
-            return
+            logger.error(
+                "❌ Google Sheet ID not configured! Data workers will not start."
+            )
+            # سنقوم برفع خطأ هنا ليتم التقاطه بواسطة الديكوريتور
+            raise ValueError("Google Sheet ID not configured in config.json")
 
+        # هذه الدالة ستفشل إذا كان ملف credentials.json غير صالح
+        # والخطأ سيتم التقاطه بواسطة الـ Decorator الذي يغلف هذه الدالة
         sheets_api = GoogleSheetsAPI(credentials_file, spreadsheet_id, sheet_name)
 
         log_dir = config.get("queue", {}).get("log_dir", "logs")
         weekly_log = WeeklyLogger(log_dir)
 
-        # ✅ تحديد Workers المتاحة
+        # قائمة الـ workers الخاصة بالبيانات فقط
         workers = [
             pending_worker(config, sheets_api, weekly_log),
             retry_worker(config, sheets_api, weekly_log),
         ]
 
-        # ✅ إضافة Taken Worker إذا كان متوفر
         if TAKEN_WORKER_AVAILABLE:
             logger.info(
-                "🚀 Starting Google Sheets workers (pending + retry + taken)..."
+                "🚀 Starting Google Sheets data workers (pending, retry, taken)..."
             )
             workers.append(start_taken_worker(config, sheets_api))
         else:
-            logger.info("🚀 Starting Google Sheets workers (pending + retry only)...")
-
-        # ✅ إضافة Error Notification Worker إذا كان مفعّل
-        if config.get("sheets_error_notifications", {}).get("enabled", False) and telegram_app:
-            logger.info("🚨 Starting Error Notification Worker...")
-            workers.append(start_error_notification_worker(config, telegram_app.bot))
-        else:
-            logger.info("⚪ Error Notification Worker disabled or no bot available")
+            logger.info(
+                "🚀 Starting Google Sheets data workers (pending, retry only)..."
+            )
 
         await asyncio.gather(*workers)
 
     except Exception as e:
-        logger.exception(f"❌ Fatal error in sheet worker: {e}")
+        # هذا الخطأ سيتم التقاطه بواسطة الـ Decorator الذي يغلف هذه الدالة
+        logger.exception(
+            f"❌ A critical error occurred during the startup of sheet workers: {e}"
+        )
+        # نعيد رفع الخطأ لضمان أن الـ Decorator يمكنه التعامل معه
+        raise
