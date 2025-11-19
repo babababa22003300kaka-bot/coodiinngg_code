@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from api_manager import smart_cache
 from config import (
     BURST_MODE_INTERVAL,
@@ -833,11 +835,30 @@ async def send_status_notification(
 
         notification += f"\n💡 `/search {email}` للتفاصيل"
 
-        # 🎯 الخطوة 4: إرسال الإشعار إلى الجروب الصحيح
+        # 🔥 الخطوة 4: إضافة الزر حصرياً لجروب "جميع الحالات"
+        reply_markup = None
+        
+        # نجيب ID جروب "جميع الحالات" من الكونفيج
+        all_cases_group_id = None
+        if "notification_groups" in CONFIG:
+            for g in CONFIG["notification_groups"].get("groups", []):
+                if g.get("name") == "جميع الحالات":
+                    all_cases_group_id = parse_group_id(g.get("group_id"))
+                    break
+        
+        # لو الجروب المستهدف هو نفسه "جميع الحالات" -> ضيف الزر
+        if all_cases_group_id and target_group_id == all_cases_group_id:
+            keyboard = [
+                [InlineKeyboardButton(f"🔧 تعديل سيندر", callback_data=f"edit_sender_{account_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # 🎯 الخطوة 5: إرسال الإشعار إلى الجروب الصحيح
         await telegram_bot.send_message(
             chat_id=target_group_id,  # ⬅️ الأهم: استخدام المتغير الجديد هنا
             text=notification,
             parse_mode="Markdown",
+            reply_markup=reply_markup  # الزر هنا
         )
 
         logger.info(
