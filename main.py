@@ -21,6 +21,7 @@ from telegram.ext import (
     filters,
 )
 
+import getAccountData_editAccount
 from api_manager import OptimizedAPIManager, smart_cache
 from config import FINAL_STATUSES, TRANSITIONAL_STATUSES
 from core import (
@@ -178,17 +179,36 @@ async def monitor_account_task(api_manager, email, msg, chat_id, group_name):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إضافة حساب جديد"""
+    """معالجة النصوص (إضافة جديد OR تعديل)"""
+    user_id = update.effective_user.id
     admin_ids = CONFIG["telegram"].get("admin_ids", [])
 
-    if not is_admin(update.effective_user.id, admin_ids):
+    if not is_admin(user_id, admin_ids):
         return
-
-    # تجاهل الأوامر
+    
     if update.message.text.startswith("/"):
         return
 
-    # تحليل البيانات
+    # 🔥 فحص: هل نحن في وضع التعديل؟
+    if 'edit_mode_id' in context.user_data:
+        account_id = context.user_data['edit_mode_id']
+        input_text = update.message.text
+        
+        msg = await update.message.reply_text("⏳ *جاري التنفيذ...*", parse_mode="Markdown")
+        
+        # استدعاء الموتور من الملف الجديد
+        success, response = await getAccountData_editAccount.execute_smart_edit(api_manager, account_id, input_text)
+        
+        if success:
+            await msg.edit_text(response, parse_mode="Markdown")
+            del context.user_data['edit_mode_id']  # خروج من الوضع
+        else:
+            # في حالة الفشل، نخليه في الوضع عشان يصحح، أو يضغط إلغاء
+            await msg.edit_text(f"{response}\n\n🔄 حاول مرة أخرى أو اضغط إلغاء.")
+            
+        return  # وقف هنا، متكملش كود الإضافة
+
+    # ... باقي كود إضافة الحساب الجديد القديم يفضل زي ما هو هنا ...
     data = parse_sender_data(update.message.text)
 
     if not data["email"] or not data["password"]:
@@ -584,6 +604,51 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
+# 🔧 Edit Sender Handlers (زر التعديل)
+# ═══════════════════════════════════════════════════════════════
+
+
+async def handle_edit_sender_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج ضغط الزر - تعديل سيندر"""
+    query = update.callback_query
+    await query.answer()
+    
+    # التأكد من الأدمن
+    admin_ids = CONFIG["telegram"].get("admin_ids", [])
+    if not is_admin(update.effective_user.id, admin_ids):
+        await query.answer("⛔ للأدمن فقط", show_alert=True)
+        return
+
+    # استخراج الـ ID
+    account_id = query.data.replace("edit_sender_", "")
+    
+    # حفظ الحالة: الأدمن ده بيعدل الحساب ده
+    context.user_data['edit_mode_id'] = account_id
+    
+    # زر الإلغاء (اختياري للتنظيم)
+    keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="cancel_edit")]]
+    
+    await query.message.reply_text(
+        f"🔧 *تعديل سيندر (وضع التنفيذ)*\n"
+        f"🆔 ID: `{account_id}`\n\n"
+        f"📝 *اكتب البيانات الجديدة في رسالة واحدة:*\n"
+        f"1. إيميل\n2. باسورد\n3. أكواد\n\n"
+        f"_(النظام مرن جداً، اكتب بأي ترتيب)_",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج زر الإلغاء"""
+    query = update.callback_query
+    await query.answer("تم الإلغاء")
+    if 'edit_mode_id' in context.user_data:
+        del context.user_data['edit_mode_id']
+    await query.message.edit_text("❌ تم إلغاء عملية التعديل.")
+
+
+# ═══════════════════════════════════════════════════════════════
 # 🚀 Initialization & Main Function
 # ═══════════════════════════════════════════════════════════════
 
@@ -694,6 +759,14 @@ def main():
     )
     telegram_app.add_handler(
         CallbackQueryHandler(handle_noop_callback, pattern="^noop$")
+    )
+
+    # ✅ معالجات زر التعديل
+    telegram_app.add_handler(
+        CallbackQueryHandler(handle_edit_sender_btn, pattern="^edit_sender_")
+    )
+    telegram_app.add_handler(
+        CallbackQueryHandler(handle_cancel_edit, pattern="^cancel_edit$")
     )
 
     telegram_app.add_handler(
