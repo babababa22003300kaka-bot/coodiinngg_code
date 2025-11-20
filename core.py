@@ -16,8 +16,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
 from api_manager import smart_cache
 from config import (
     BURST_MODE_INTERVAL,
@@ -789,6 +787,7 @@ async def send_status_notification(
     - يختار الجروب المناسب حسب الحالة الجديدة
     - يرسل لجروب واحد فقط (Exclusivity)
     - يستخدم Fallback لو مفيش تطابق
+    - يضيف زر "تعديل سيندر" في جروب "جميع الحالات" فقط
 
     ⚡ Performance:
     - يستخدم CONFIG المُحمَّل مسبقاً (مرة واحدة عند البدء)
@@ -835,30 +834,34 @@ async def send_status_notification(
 
         notification += f"\n💡 `/search {email}` للتفاصيل"
 
-        # 🔥 الخطوة 4: إضافة الزر حصرياً لجروب "جميع الحالات"
+        # 🔧 الخطوة 3.5: إضافة زر "تعديل سيندر" في جروب "جميع الحالات" فقط
         reply_markup = None
+        # البحث عن جروب "جميع الحالات"
+        all_states_group_id = None
+        for group in CONFIG.get("notification_groups", {}).get("groups", []):
+            if group.get("name") == "جميع الحالات":
+                all_states_group_id = group.get("group_id")
+                break
         
-        # نجيب ID جروب "جميع الحالات" من الكونفيج
-        all_cases_group_id = None
-        if "notification_groups" in CONFIG:
-            for g in CONFIG["notification_groups"].get("groups", []):
-                if g.get("name") == "جميع الحالات":
-                    all_cases_group_id = parse_group_id(g.get("group_id"))
-                    break
-        
-        # لو الجروب المستهدف هو نفسه "جميع الحالات" -> ضيف الزر
-        if all_cases_group_id and target_group_id == all_cases_group_id:
+        # إذا كان الجروب الحالي هو "جميع الحالات"، أضف الزر
+        if all_states_group_id and target_group_id == all_states_group_id:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             keyboard = [
-                [InlineKeyboardButton(f"🔧 تعديل سيندر", callback_data=f"edit_sender_{account_id}")]
+                [
+                    InlineKeyboardButton(
+                        "🔧 تعديل بيانات السيندر", 
+                        callback_data=f"edit_sender:{account_id}"
+                    )
+                ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # 🎯 الخطوة 5: إرسال الإشعار إلى الجروب الصحيح
+        # 🎯 الخطوة 4: إرسال الإشعار إلى الجروب الصحيح (مع الزر إذا وُجد)
         await telegram_bot.send_message(
-            chat_id=target_group_id,  # ⬅️ الأهم: استخدام المتغير الجديد هنا
+            chat_id=target_group_id,
             text=notification,
             parse_mode="Markdown",
-            reply_markup=reply_markup  # الزر هنا
+            reply_markup=reply_markup,  # ⬅️ الزر هنا (None في الجروبات الأخرى)
         )
 
         logger.info(

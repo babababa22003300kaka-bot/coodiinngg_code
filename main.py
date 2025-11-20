@@ -21,7 +21,6 @@ from telegram.ext import (
     filters,
 )
 
-import getAccountData_editAccount
 from api_manager import OptimizedAPIManager, smart_cache
 from config import FINAL_STATUSES, TRANSITIONAL_STATUSES
 from core import (
@@ -37,6 +36,9 @@ from core import (
 from sheets.worker import start_sheet_worker
 from stats import stats
 from web_api.server import start_web_api
+
+# 🔧 استيراد معالجات تعديل السيندر
+import getAccountData_editAccount as edit_sender_module
 
 # ═══════════════════════════════════════════════════════════════
 # 📝 Logging Configuration
@@ -179,36 +181,46 @@ async def monitor_account_task(api_manager, email, msg, chat_id, group_name):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة النصوص (إضافة جديد OR تعديل)"""
-    user_id = update.effective_user.id
+    """
+    [ROUTER] معالج الرسائل النصية الرئيسي
+    
+    يعمل كـ "موجه" (Router) يوجه الرسائل حسب حالة المستخدم:
+    - إذا كان في وضع التعديل → يوجه لـ process_edit_input
+    - إذا كان في الوضع العادي → يتعامل معها كـ إضافة حساب جديد
+    """
     admin_ids = CONFIG["telegram"].get("admin_ids", [])
 
-    if not is_admin(user_id, admin_ids):
+    if not is_admin(update.effective_user.id, admin_ids):
         return
-    
+
+    # تجاهل الأوامر
     if update.message.text.startswith("/"):
         return
+    
+    # ═══════════════════════════════════════════════════════════
+    # 🎯 State-Based Routing: التحقق من وضع المستخدم
+    # ═══════════════════════════════════════════════════════════
+    user_id = update.effective_user.id
+    
+    # هل المستخدم في وضع التعديل؟
+    if user_id in edit_sender_module.user_editing_state:
+        account_id = edit_sender_module.user_editing_state[user_id]
+        print(f"\n[ROUTER] 🔀 User {user_id} is in EDIT MODE (account: {account_id})")
+        print(f"[ROUTER] ➡️ Forwarding to edit handler...")
+        
+        # توجيه الرسالة لمعالج التعديل
+        await edit_sender_module.process_edit_input(update, context)
+        return  # ⬅️ مهم جداً: الخروج هنا لمنع تنفيذ كود الإضافة
+    
+    # المستخدم في الوضع العادي → معالجة كـ إضافة
+    print(f"\n[ROUTER] 🔀 User {user_id} is in NORMAL MODE")
+    print(f"[ROUTER] ➡️ Processing as new account addition...")
 
-    # 🔥 فحص: هل نحن في وضع التعديل؟
-    if 'edit_mode_id' in context.user_data:
-        account_id = context.user_data['edit_mode_id']
-        input_text = update.message.text
-        
-        msg = await update.message.reply_text("⏳ *جاري التنفيذ...*", parse_mode="Markdown")
-        
-        # استدعاء الموتور من الملف الجديد
-        success, response = await getAccountData_editAccount.execute_smart_edit(api_manager, account_id, input_text)
-        
-        if success:
-            await msg.edit_text(response, parse_mode="Markdown")
-            del context.user_data['edit_mode_id']  # خروج من الوضع
-        else:
-            # في حالة الفشل، نخليه في الوضع عشان يصحح، أو يضغط إلغاء
-            await msg.edit_text(f"{response}\n\n🔄 حاول مرة أخرى أو اضغط إلغاء.")
-            
-        return  # وقف هنا، متكملش كود الإضافة
-
-    # ... باقي كود إضافة الحساب الجديد القديم يفضل زي ما هو هنا ...
+    # ═══════════════════════════════════════════════════════════
+    # ➕ معالجة إضافة حساب جديد (الكود الأصلي)
+    # ═══════════════════════════════════════════════════════════
+    
+    # تحليل البيانات
     data = parse_sender_data(update.message.text)
 
     if not data["email"] or not data["password"]:
@@ -604,51 +616,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 Edit Sender Handlers (زر التعديل)
-# ═══════════════════════════════════════════════════════════════
-
-
-async def handle_edit_sender_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج ضغط الزر - تعديل سيندر"""
-    query = update.callback_query
-    await query.answer()
-    
-    # التأكد من الأدمن
-    admin_ids = CONFIG["telegram"].get("admin_ids", [])
-    if not is_admin(update.effective_user.id, admin_ids):
-        await query.answer("⛔ للأدمن فقط", show_alert=True)
-        return
-
-    # استخراج الـ ID
-    account_id = query.data.replace("edit_sender_", "")
-    
-    # حفظ الحالة: الأدمن ده بيعدل الحساب ده
-    context.user_data['edit_mode_id'] = account_id
-    
-    # زر الإلغاء (اختياري للتنظيم)
-    keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="cancel_edit")]]
-    
-    await query.message.reply_text(
-        f"🔧 *تعديل سيندر (وضع التنفيذ)*\n"
-        f"🆔 ID: `{account_id}`\n\n"
-        f"📝 *اكتب البيانات الجديدة في رسالة واحدة:*\n"
-        f"1. إيميل\n2. باسورد\n3. أكواد\n\n"
-        f"_(النظام مرن جداً، اكتب بأي ترتيب)_",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج زر الإلغاء"""
-    query = update.callback_query
-    await query.answer("تم الإلغاء")
-    if 'edit_mode_id' in context.user_data:
-        del context.user_data['edit_mode_id']
-    await query.message.edit_text("❌ تم إلغاء عملية التعديل.")
-
-
-# ═══════════════════════════════════════════════════════════════
 # 🚀 Initialization & Main Function
 # ═══════════════════════════════════════════════════════════════
 
@@ -700,6 +667,10 @@ async def post_init(application: Application):
     if CONFIG.get("google_sheet", {}).get("enabled", False):
         logger.info("📊 Starting Google Sheets Data Workers...")
         asyncio.create_task(start_sheet_worker(CONFIG))
+
+    # 🔧 تسجيل معالجات تعديل السيندر
+    logger.info("🔧 Registering Edit Sender Handlers...")
+    edit_sender_module.register_handlers(application)
 
     logger.info("✅ System is fully operational!")
 
@@ -761,14 +732,6 @@ def main():
         CallbackQueryHandler(handle_noop_callback, pattern="^noop$")
     )
 
-    # ✅ معالجات زر التعديل
-    telegram_app.add_handler(
-        CallbackQueryHandler(handle_edit_sender_btn, pattern="^edit_sender_")
-    )
-    telegram_app.add_handler(
-        CallbackQueryHandler(handle_cancel_edit, pattern="^cancel_edit$")
-    )
-
     telegram_app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
     )
@@ -806,3 +769,6 @@ if __name__ == "__main__":
 
         if api_manager:
             asyncio.run(api_manager.close())
+        
+        # تنظيف موارد edit_sender
+        asyncio.run(edit_sender_module.cleanup())
